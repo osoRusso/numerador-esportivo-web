@@ -1,34 +1,36 @@
 import streamlit as st
 import os
+import io
+import re
+from PIL import Image
+from google.cloud import vision
 
+# Configuração das credenciais do Google Cloud
 # Este bloco deve ser o PRIMEIRO do app.py!
 if "GOOGLE_APPLICATION_CREDENTIALS" in st.secrets:
+    # Caso esteja rodando no Streamlit Cloud, usa as credenciais dos secrets
     with open("gcloud-key.json", "w") as f:
         f.write(st.secrets["GOOGLE_APPLICATION_CREDENTIALS"])
     os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = "gcloud-key.json"
-else:
+elif os.path.exists("ocr-desktop-460002-e6ee797c7953.json"):
+    # Caso esteja rodando localmente e o arquivo exista
     os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = "ocr-desktop-460002-e6ee797c7953.json"
-import streamlit as st
-from PIL import Image
-import os
-import io
-import re
+else:
+    # Mensagem de erro caso não encontre as credenciais
+    st.error("Arquivo de credenciais do Google Cloud não encontrado. Verifique se o arquivo 'ocr-desktop-460002-e6ee797c7953.json' existe no diretório do aplicativo ou configure os secrets no Streamlit Cloud.")
 
-from google.cloud import vision
-
-os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = "ocr-desktop-460002-e6ee797c7953.json"
-
+# Configuração da página
 st.set_page_config(page_title="Numerador Esportivo Web", layout="centered")
-
 st.title("Numerador Esportivo Web")
 
+# Criação das abas
 tab_manual, tab_ocr = st.tabs(["Numerador Manual", "Numerador OCR Automático"])
 
 # ------------- Numerador Manual -----------------
-
 with tab_manual:
     st.header("Numerador Manual (com atalhos de teclado)")
     uploaded_files = st.file_uploader("Selecione as imagens", type=['jpg', 'jpeg', 'png'], accept_multiple_files=True, key="manual")
+    
     if uploaded_files:
         if "manual_index" not in st.session_state:
             st.session_state.manual_index = 0
@@ -80,8 +82,6 @@ with tab_manual:
             st.download_button("Baixar CSV", data=csv_content, file_name="numerador_manual.csv", mime="text/csv")
 
 # ------------- OCR Automático Esportivo -----------------
-import random
-
 def esporte_svg(progresso, total, modalidade):
     pct = int((progresso/total)*400)
     atleta = {"Corrida":"🏃‍♂️", "Ciclismo":"🚴", "Natação":"🏊"}.get(modalidade, "🏃‍♂️")
@@ -101,34 +101,52 @@ with tab_ocr:
     st.header("Numerador OCR Automático (Google Vision)")
     uploaded_files_ocr = st.file_uploader("Selecione imagens para OCR", type=['jpg','jpeg','png'], accept_multiple_files=True, key="ocr")
     modalidade = st.selectbox("Modalidade esportiva para animação:", ["Corrida", "Ciclismo", "Natação"])
-    if uploaded_files_ocr:
-        client = vision.ImageAnnotatorClient()
-        ocr_results = []
-        total = len(uploaded_files_ocr)
-        barra = st.empty()
-        for i, img_file in enumerate(uploaded_files_ocr):
-            svg = esporte_svg(i+1, total, modalidade)
-            barra.markdown(svg, unsafe_allow_html=True)
-            content = img_file.read()
-            image = vision.Image(content=content)
-            response = client.text_detection(image=image)
-            texts = response.text_annotations
-            numeros = []
-            if texts:
-                encontrados = re.findall(r'\d+', texts[0].description)
-                if encontrados:
-                    numeros = encontrados
-            linha = f"{img_file.name};{' '.join(numeros)}" if numeros else f"{img_file.name};"
-            ocr_results.append(linha)
-            st.image(Image.open(io.BytesIO(content)), caption=f"OCR: {linha}", width=320)
-        barra.markdown(esporte_svg(total, total, modalidade), unsafe_allow_html=True)
-        if st.button("Baixar CSV com resultados OCR", key="ocr_download") and ocr_results:
-            csv_content = "\n".join(ocr_results)
-            st.download_button(
-                label="Download CSV",
-                data=csv_content,
-                file_name="numerador_ocr.csv",
-                mime="text/csv"
-            )
-
-
+    
+    # Verifica se as credenciais estão configuradas antes de tentar usar o Vision API
+    credenciais_ok = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS") and os.path.exists(os.environ["GOOGLE_APPLICATION_CREDENTIALS"])
+    
+    if not credenciais_ok:
+        st.error("Credenciais do Google Cloud Vision API não configuradas corretamente. A funcionalidade OCR não estará disponível.")
+    
+    if uploaded_files_ocr and credenciais_ok:
+        try:
+            client = vision.ImageAnnotatorClient()
+            ocr_results = []
+            total = len(uploaded_files_ocr)
+            barra = st.empty()
+            
+            for i, img_file in enumerate(uploaded_files_ocr):
+                svg = esporte_svg(i+1, total, modalidade)
+                barra.markdown(svg, unsafe_allow_html=True)
+                
+                content = img_file.read()
+                image = vision.Image(content=content)
+                
+                response = client.text_detection(image=image)
+                texts = response.text_annotations
+                
+                numeros = []
+                if texts:
+                    encontrados = re.findall(r'\d+', texts[0].description)
+                    if encontrados:
+                        numeros = encontrados
+                
+                linha = f"{img_file.name};{' '.join(numeros)}" if numeros else f"{img_file.name};"
+                ocr_results.append(linha)
+                
+                # Reabrir a imagem para exibição
+                st.image(Image.open(io.BytesIO(img_file.getvalue())), caption=f"OCR: {linha}", width=320)
+            
+            barra.markdown(esporte_svg(total, total, modalidade), unsafe_allow_html=True)
+            
+            if ocr_results:
+                csv_content = "\n".join(ocr_results)
+                st.download_button(
+                    label="Baixar CSV com resultados OCR",
+                    data=csv_content,
+                    file_name="numerador_ocr.csv",
+                    mime="text/csv"
+                )
+        except Exception as e:
+            st.error(f"Erro ao processar OCR: {str(e)}")
+            st.info("Verifique se as credenciais do Google Cloud Vision API estão configuradas corretamente.")
