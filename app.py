@@ -1,4 +1,14 @@
 import streamlit as st
+import os
+
+# Este bloco deve ser o PRIMEIRO do app.py!
+if "GOOGLE_APPLICATION_CREDENTIALS" in st.secrets:
+    with open("gcloud-key.json", "w") as f:
+        f.write(st.secrets["GOOGLE_APPLICATION_CREDENTIALS"])
+    os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = "gcloud-key.json"
+else:
+    os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = "ocr-desktop-460002-e6ee797c7953.json"
+import streamlit as st
 from PIL import Image
 import os
 import io
